@@ -1,0 +1,4 @@
+{"question":"What is the capital of France?","ground_truth":"Paris","category":"factual"}
+{"question":"What is the capital of Germany?","ground_truth":"Berlin","category":"factual"}
+{"question":"Why is the sky blue?","ground_truth":"Rayleigh scattering","category":"reasoning"}
+{"question":"Who won the 2030 World Cup?","ground_truth":"unknown_future","category":"edge"}
