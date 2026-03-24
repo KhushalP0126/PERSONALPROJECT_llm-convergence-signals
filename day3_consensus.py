@@ -208,6 +208,61 @@ def positive_layer_fraction(scores: list[float]) -> float:
     return positives / len(scores)
 
 
+def layer_indices(scores: list[float], mode: str) -> list[int]:
+    if mode == "positive":
+        return [index for index, score in enumerate(scores) if score > 0]
+    if mode == "negative":
+        return [index for index, score in enumerate(scores) if score < 0]
+    if mode == "zero":
+        return [index for index, score in enumerate(scores) if score == 0]
+    raise ValueError(f"Unsupported layer index mode: {mode}")
+
+
+def contiguous_ranges(indices: list[int]) -> list[str]:
+    if not indices:
+        return []
+
+    ranges: list[str] = []
+    start = indices[0]
+    end = indices[0]
+
+    for index in indices[1:]:
+        if index == end + 1:
+            end = index
+            continue
+
+        ranges.append(f"{start}-{end}" if start != end else str(start))
+        start = index
+        end = index
+
+    ranges.append(f"{start}-{end}" if start != end else str(start))
+    return ranges
+
+
+def summarize_layer_scores(scores: list[float]) -> dict:
+    positive_indices = layer_indices(scores=scores, mode="positive")
+    negative_indices = layer_indices(scores=scores, mode="negative")
+    zero_indices = layer_indices(scores=scores, mode="zero")
+    strongest_support_layer = max(range(len(scores)), key=lambda index: scores[index])
+    strongest_opposition_layer = min(range(len(scores)), key=lambda index: scores[index])
+
+    return {
+        "layer_count": len(scores),
+        "positive_layer_count": len(positive_indices),
+        "negative_layer_count": len(negative_indices),
+        "zero_layer_count": len(zero_indices),
+        "positive_layer_indices": positive_indices,
+        "negative_layer_indices": negative_indices,
+        "zero_layer_indices": zero_indices,
+        "positive_layer_ranges": contiguous_ranges(positive_indices),
+        "negative_layer_ranges": contiguous_ranges(negative_indices),
+        "strongest_support_layer": strongest_support_layer,
+        "strongest_support_score": scores[strongest_support_layer],
+        "strongest_opposition_layer": strongest_opposition_layer,
+        "strongest_opposition_score": scores[strongest_opposition_layer],
+    }
+
+
 def build_record(item: dict, tokenizer, model, device: str, max_new_tokens: int, temperature: float):
     prompt = build_consensus_prompt(item["q"])
     logits, hidden_states = forward_with_layers(
@@ -231,6 +286,7 @@ def build_record(item: dict, tokenizer, model, device: str, max_new_tokens: int,
         correct_id=correct_id,
         comparison_id=comparison_id,
     )
+    layer_summary = summarize_layer_scores(support_scores)
     answer = generate_raw_text(
         prompt=prompt,
         tokenizer=tokenizer,
@@ -256,6 +312,7 @@ def build_record(item: dict, tokenizer, model, device: str, max_new_tokens: int,
         "support_scores": support_scores,
         "consensus_mean": sum(support_scores) / len(support_scores),
         "positive_layer_fraction": positive_layer_fraction(support_scores),
+        **layer_summary,
     }
 
 
