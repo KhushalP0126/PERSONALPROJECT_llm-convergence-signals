@@ -1,74 +1,65 @@
-# Hallucination Consensus Analyzer (Local LLM - M2)
+# Hallucination Consensus Analyzer
 
-This project builds a local hallucination analysis pipeline and extends it into mechanistic interpretability by analyzing:
+This project studies hallucination as a failure of internal consensus formation inside a local language model.
 
-- which internal signals support an answer
-- which signals oppose it
-- whether the model reaches internal consensus or conflict
+It includes:
 
-## Objective
+- local chat and prompt testing on Apple Silicon
+- hidden-state collection for question/answer runs
+- layer-by-layer consensus scoring
+- TruthfulQA benchmark preparation and paired truth-vs-false analysis
+- visualization and conflict metrics for proving whether the signal separates correct answers from hallucinations
 
-Move from:
-
-```text
-black-box scoring
-```
-
-to:
-
-```text
-internal signal analysis (consensus vs opposition)
-```
-
-## Setup (Mac M2)
+## Setup
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Verify MPS:
-
-```python
-import torch
-print(torch.backends.mps.is_available())
-```
-
-You can also run:
+Check MPS:
 
 ```bash
 python check_mps.py
 ```
 
-## Makefile Shortcuts
+## Main Scripts
 
-You can run the main commands with `make` instead of typing the full Python command each time:
+- `local_chat.py`: interactive local generation
+- `build_scored_hidden_dataset.py`: generate answers, score them, and save hidden states
+- `build_consensus_dataset.py`: build layer-wise support and opposition scores
+- `summarize_layer_support.py`: report where supportive layers occur and whether they recur in the same region
+- `prepare_truthfulqa_dataset.py`: download and convert TruthfulQA into a paired dataset
+- `benchmark_truthfulqa_consensus.py`: compare truthful vs false answer tokens on TruthfulQA
+- `visualize_consensus_patterns.py`: plot curves, compute conflict scores, and evaluate a simple threshold baseline
+
+## Makefile Shortcuts
 
 ```bash
 make setup
 make check-mps
 make prompt PROMPT="What is the capital of France?"
-make day2
-make day3
-make analyze-layers
-make truthfulqa-prepare
-make truthfulqa-consensus
+make build-hidden-dataset
+make build-consensus-dataset
+make summarize-layer-support
+make prepare-truthfulqa
+make benchmark-truthfulqa
+make visualize-consensus
 ```
 
-Optional overrides:
+Useful overrides:
 
 ```bash
 make prompt MODEL="microsoft/phi-2" PROMPT="What is the capital of Germany?"
-make day3 DAY3_OUT=results/consensus_dataset_test.json
-make truthfulqa-consensus TRUTHFULQA_LIMIT=20
+make benchmark-truthfulqa TRUTHFULQA_LIMIT=20
+make visualize-consensus VIS_INPUT=results/truthfulqa_consensus_benchmark.json
 ```
 
-## Model
+## Model Runtime
 
-Verified fast local path:
+Verified fast path:
 
 ```python
 model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
@@ -80,95 +71,31 @@ Optional:
 model_name = "microsoft/phi-2"
 ```
 
-Models are loaded through the shared runtime in `hf_local.py`. The project uses explicit device placement on `mps` and enables hidden-state extraction during analysis passes rather than relying on `device_map="mps"`.
+The shared runtime lives in `hf_local.py`.
 
-## Core Pipeline
+## Seed Data
 
-```text
-question
-   ↓
-model forward pass
-   ↓
-hidden states (all layers)
-   ↓
-logit lens (per layer)
-   ↓
-support vs opposition scores
-```
-
-## Key Concept
-
-Each layer contributes to the final prediction.
-
-The Day 3 pipeline measures:
+Hidden-state seed questions:
 
 ```text
-support = logit(correct_token) - logit(comparison_token)
+data/seed_questions.jsonl
 ```
 
-- positive: supports the correct answer
-- negative: opposes the correct answer
-
-When the model already predicts the correct token, the comparison token is the strongest alternative token instead of the correct token itself. That avoids collapsing the score to zero.
-
-## Datasets
-
-### Day 2 seed dataset
-
-`data/day2_questions.jsonl`
-
-Each entry contains:
-
-```json
-{
-  "question": "...",
-  "ground_truth": "...",
-  "category": "..."
-}
-```
-
-### Day 3 consensus dataset input
-
-`data/base_dataset.json`
-
-Each entry contains:
-
-```json
-{
-  "q": "...",
-  "a": "...",
-  "label": "factual | reasoning | unanswerable"
-}
-```
-
-### TruthfulQA benchmark input
-
-Prepare it with:
-
-```bash
-python prepare_truthfulqa.py --limit 50
-```
-
-This creates:
+Consensus seed dataset:
 
 ```text
-data/truthfulqa_balanced.json
+data/consensus_seed_dataset.json
 ```
 
-Each entry contains:
+Prepared TruthfulQA pairs:
 
-```json
-{
-  "q": "...",
-  "correct_answer": "...",
-  "incorrect_answer": "...",
-  "source": "truthfulqa_generation_validation"
-}
+```text
+data/truthfulqa_pairs.json
 ```
 
-## Implementation
+Generated TruthfulQA files are ignored by git.
 
-### 1. Day 1 local chat
+## 1. Local Generation
 
 Single prompt:
 
@@ -182,15 +109,27 @@ Interactive loop:
 python local_chat.py
 ```
 
-### 2. Day 2 answer -> score -> hidden pipeline
+## 2. Build A Scored Hidden-State Dataset
 
-Run on the labeled seed set:
+Run on the seed questions:
 
 ```bash
-python day2_pipeline.py
+python build_scored_hidden_dataset.py
 ```
 
-This produces records with:
+Or one question:
+
+```bash
+python build_scored_hidden_dataset.py --question "What is the capital of France?"
+```
+
+Output:
+
+```text
+results/scored_hidden_dataset.jsonl
+```
+
+Each record contains:
 
 - `question`
 - `answer`
@@ -200,166 +139,163 @@ This produces records with:
 - `hidden`
 - `hidden_shape`
 
-Output file:
+## 3. Build A Consensus Dataset
 
-```text
-results/day2_results.jsonl
-```
-
-### 3. Day 3 consensus pipeline
-
-Run the consensus dataset builder:
+Run:
 
 ```bash
-python day3_consensus.py
+python build_consensus_dataset.py
 ```
 
-This:
-
-- runs a forward pass with `output_hidden_states=True`
-- projects each layer through final norm plus `lm_head`
-- extracts the next-token distribution at each layer
-- compares the target token against the model prediction or strongest alternative
-
-Output file:
+Output:
 
 ```text
 results/consensus_dataset.json
 ```
 
-### 4. TruthfulQA consensus benchmark
+Each record includes:
 
-Prepare a small benchmark slice:
+- `support_scores`
+- `positive_layer_fraction`
+- `positive_layer_indices`
+- `positive_layer_ranges`
+- `strongest_support_layer`
+- `strongest_opposition_layer`
+
+This script measures support as:
+
+```text
+logit(correct_token) - logit(comparison_token)
+```
+
+When the model already predicts the correct token, the comparison token becomes the strongest alternative token instead of the correct token itself.
+
+## 4. Summarize Where Support Comes From
+
+Run:
 
 ```bash
-python prepare_truthfulqa.py --limit 50
+python summarize_layer_support.py --in results/consensus_dataset.json
 ```
 
-Run the paired truth-vs-false analysis:
+This tells you:
+
+- how many layers are positive
+- which exact layer indices are positive
+- whether those layers cluster in early, middle, or late regions
+- whether the same regions recur across examples
+
+## 5. Prepare TruthfulQA
+
+Download and convert a small benchmark slice:
 
 ```bash
-python truthfulqa_consensus.py --limit 50
+python prepare_truthfulqa_dataset.py --limit 50
 ```
 
-Or with `make`:
+Output:
 
-```bash
-make truthfulqa-prepare TRUTHFULQA_LIMIT=50
-make truthfulqa-consensus TRUTHFULQA_LIMIT=50
+```text
+data/truthfulqa_pairs.json
 ```
 
-This path compares the token for the truthful answer against the token for a common false answer from TruthfulQA, which is a stronger benchmark signal than only comparing against the model's own predicted token.
-
-When the truthful and false answers share the same opening tokens, the benchmark automatically moves to the first token where they diverge. For example, if both answers start with `Fortune cookies originated in ...`, the analysis compares `San` versus `China` rather than comparing the shared prefix.
-
-## Core Mechanics
-
-### Forward pass with hidden states
-
-```python
-outputs = model(
-    **inputs,
-    output_hidden_states=True,
-    return_dict=True,
-    use_cache=False,
-)
-```
-
-### Logit lens per layer
-
-```python
-for hidden_state in hidden_states[1:]:
-    normalized_hidden = apply_final_norm(model, hidden_state)
-    logits = model.lm_head(normalized_hidden[:, -1, :])
-```
-
-### Consensus / opposition scoring
-
-```python
-correct_score = layer_logit[0, correct_id].item()
-comparison_score = layer_logit[0, comparison_id].item()
-support_score = correct_score - comparison_score
-```
-
-## Output Format
-
-Each Day 3 sample looks like:
+Each record contains:
 
 ```json
 {
-  "q": "What is the capital of France?",
-  "gt": "Paris",
-  "label": "factual",
-  "answer": "Paris is the capital of France.",
-  "predicted_token": "Paris",
-  "comparison_token": "The",
-  "comparison_mode": "top_alternative",
-  "correct_token": "Paris",
-  "support_scores": [0.1, -0.4, 0.8],
-  "consensus_mean": -0.2,
-  "positive_layer_fraction": 0.33
+  "q": "...",
+  "correct_answer": "...",
+  "incorrect_answer": "...",
+  "source": "truthfulqa_generation_validation"
 }
 ```
 
-## Interpretation
+## 6. Run The TruthfulQA Consensus Benchmark
 
-- mostly positive scores: internal agreement toward the target answer
-- mixed scores: conflict or unstable convergence
-- mostly negative scores: internal opposition or hallucination tendency
+Run:
 
-## What This Reveals
+```bash
+python benchmark_truthfulqa_consensus.py --limit 50
+```
 
-Instead of asking:
+Output:
 
-> Is the answer wrong?
+```text
+results/truthfulqa_consensus_benchmark.json
+```
 
-you can ask:
+This script compares truthful and false answers at the first token where they diverge. If both answers share a prefix like:
 
-> Did the model internally agree with itself?
+```text
+Fortune cookies originated in ...
+```
 
-## Next Steps
+it compares the first differing token, such as:
 
-### Day 4
+```text
+San vs China
+```
 
-- correlate support patterns against labels
-- test whether hallucinations show stronger conflict
+The benchmark output includes:
 
-### Day 5
+- `support_scores`
+- `label`
+- `label_method`
+- `truth_vs_false_scores`
+- `truth_vs_model_scores`
+- `shared_prefix_text`
 
-- train a classifier on `support_scores`
-- predict hallucination risk from internal signals
+`label=1` means the run was classified as truthful/correct. `label=0` means hallucinated/wrong. The script first tries to label from the generated answer text and falls back to truthful-vs-false token preference when needed.
 
-### Day 6+
+## 7. Visualize Consensus And Conflict
 
-- visualize layer-by-layer agreement
-- detect unstable answers before output
-- test causal interventions
+Run:
+
+```bash
+python visualize_consensus_patterns.py --in results/truthfulqa_consensus_benchmark.json
+```
+
+Output directory:
+
+```text
+results/consensus_plots/
+```
+
+The script saves:
+
+- `sample_plot.png`
+- `average_support.png`
+- `conflict_distribution.png`
+- `support_overlay.png`
+- `summary.json`
+
+It computes:
+
+```text
+conflict = std(support_scores)
+```
+
+and evaluates a simple threshold classifier to test whether conflict separates correct/truthful runs from hallucinated/wrong runs.
+
+If the input file already contains a binary `label`, the script uses it directly. If the `label` field is categorical, it falls back to a simple answer-vs-ground-truth heuristic using `answer`/`gt` or `model_answer`/`correct_answer`.
+
+## Day 4 Interpretation
+
+What to look for:
+
+- correct answers: support curves should become more positive or cleaner late in the stack
+- hallucinations: support curves stay noisy, cross zero, or remain negative
+- higher conflict: more instability across layers
+- lower conflict: cleaner internal agreement
+
+If the threshold accuracy is above random, the signal is doing real work.
 
 ## Notes
 
-- this is an approximation, not exact neuron attribution
-- signals are distributed across layers, not isolated to one unit
-- interpretability remains an active research area
-- the current Day 3 probe uses first-token consensus because it is the cleanest stable signal for a first pass
+- The consensus pipeline is a layer-level approximation, not exact neuron attribution.
+- TruthfulQA benchmarking is slower than the small seed datasets, so start with a small `--limit`.
+- The visualization script expects a binary label field. The TruthfulQA benchmark output already provides one.
 
-## Key Insight
+## Next Step
 
-Hallucination is not just a single wrong output.
-
-It can be framed as:
-
-```text
-failure of internal consensus formation
-```
-
-## Stack
-
-- Hugging Face Transformers
-- PyTorch with MPS on Apple Silicon
-- local causal language models such as TinyLlama and Phi-2
-
-## Future Ideas
-
-- activation patching
-- feature direction analysis
-- real-time hallucination warnings
+Once the plots and conflict scores look meaningful, the next natural step is neuron- or head-level attribution inside the most informative layers.

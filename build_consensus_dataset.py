@@ -13,7 +13,7 @@ from hf_local import (
 )
 
 
-DEFAULT_BASE_DATASET = Path("data/base_dataset.json")
+DEFAULT_BASE_DATASET = Path("data/consensus_seed_dataset.json")
 DEFAULT_OUTPUT_FILE = Path("results/consensus_dataset.json")
 
 

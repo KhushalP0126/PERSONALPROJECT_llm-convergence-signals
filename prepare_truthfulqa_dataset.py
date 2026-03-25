@@ -5,7 +5,7 @@ from pathlib import Path
 from datasets import load_dataset
 
 
-DEFAULT_OUTPUT_FILE = Path("data/truthfulqa_balanced.json")
+DEFAULT_OUTPUT_FILE = Path("data/truthfulqa_pairs.json")
 
 
 def parse_args() -> argparse.Namespace:

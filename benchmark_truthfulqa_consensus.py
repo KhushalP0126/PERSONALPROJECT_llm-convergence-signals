@@ -4,7 +4,7 @@ from pathlib import Path
 
 import torch
 
-from day3_consensus import (
+from build_consensus_dataset import (
     DEFAULT_MODEL,
     PHI2_MODEL,
     build_consensus_prompt,
@@ -20,8 +20,8 @@ from day3_consensus import (
 )
 
 
-DEFAULT_DATASET = Path("data/truthfulqa_balanced.json")
-DEFAULT_OUTPUT_FILE = Path("results/truthfulqa_consensus.json")
+DEFAULT_DATASET = Path("data/truthfulqa_pairs.json")
+DEFAULT_OUTPUT_FILE = Path("results/truthfulqa_consensus_benchmark.json")
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,7 +78,7 @@ def parse_args() -> argparse.Namespace:
 def load_truthfulqa_records(path: Path, limit: int) -> list[dict]:
     if not path.exists():
         raise FileNotFoundError(
-            f"Prepared TruthfulQA dataset not found: {path}. Run prepare_truthfulqa.py first."
+            f"Prepared TruthfulQA dataset not found: {path}. Run prepare_truthfulqa_dataset.py first."
         )
 
     records = json.loads(path.read_text())
@@ -99,6 +99,25 @@ def load_truthfulqa_records(path: Path, limit: int) -> list[dict]:
 def prefixed_summary(scores: list[float], prefix: str) -> dict:
     summary = summarize_layer_scores(scores)
     return {f"{prefix}_{key}": value for key, value in summary.items()}
+
+
+def normalize_text(text: str) -> str:
+    return " ".join(text.lower().strip().split())
+
+
+def binary_label(model_answer: str, correct_answer: str, incorrect_answer: str, truth_id: int, false_id: int, final_logits):
+    normalized_model = normalize_text(model_answer)
+    normalized_correct = normalize_text(correct_answer)
+    normalized_incorrect = normalize_text(incorrect_answer)
+
+    if normalized_correct in normalized_model and normalized_incorrect not in normalized_model:
+        return 1, "answer_match_correct"
+    if normalized_incorrect in normalized_model and normalized_correct not in normalized_model:
+        return 0, "answer_match_incorrect"
+
+    truth_score = final_logits[0, truth_id].item()
+    false_score = final_logits[0, false_id].item()
+    return (1 if truth_score > false_score else 0), "truth_false_token_preference"
 
 
 def raw_token_ids(text: str, tokenizer) -> list[int]:
@@ -194,6 +213,14 @@ def build_record(item: dict, tokenizer, model, device: str, max_new_tokens: int,
         max_new_tokens=max_new_tokens,
         temperature=temperature,
     )
+    label, label_method = binary_label(
+        model_answer=answer,
+        correct_answer=item["correct_answer"],
+        incorrect_answer=item["incorrect_answer"],
+        truth_id=truth_id,
+        false_id=false_id,
+        final_logits=final_logits,
+    )
 
     return {
         "q": item["q"],
@@ -201,6 +228,8 @@ def build_record(item: dict, tokenizer, model, device: str, max_new_tokens: int,
         "shared_prefix_text": divergence["shared_prefix_text"],
         "shared_prefix_length": divergence["shared_prefix_length"],
         "source": item.get("source", "truthfulqa"),
+        "label": label,
+        "label_method": label_method,
         "correct_answer": item["correct_answer"],
         "incorrect_answer": item["incorrect_answer"],
         "model_answer": answer,
@@ -213,6 +242,7 @@ def build_record(item: dict, tokenizer, model, device: str, max_new_tokens: int,
         "model_comparison_token_id": model_comparison_id,
         "model_comparison_token": tokenizer.decode([model_comparison_id]),
         "model_comparison_mode": model_comparison_mode,
+        "support_scores": truth_vs_false_scores,
         "truth_vs_false_scores": truth_vs_false_scores,
         "truth_vs_false_consensus_mean": sum(truth_vs_false_scores) / len(truth_vs_false_scores),
         "truth_vs_model_scores": truth_vs_model_scores,

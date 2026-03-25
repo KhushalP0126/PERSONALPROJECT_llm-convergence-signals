@@ -15,8 +15,8 @@ from hf_local import (
 )
 
 
-DEFAULT_QUESTIONS_FILE = Path("data/day2_questions.jsonl")
-DEFAULT_OUTPUT_FILE = Path("results/day2_results.jsonl")
+DEFAULT_QUESTIONS_FILE = Path("data/seed_questions.jsonl")
+DEFAULT_OUTPUT_FILE = Path("results/scored_hidden_dataset.jsonl")
 SCORE_PATTERN = re.compile(r"[-+]?\d*\.?\d+")
 UNKNOWN_FUTURE = "unknown_future"
 

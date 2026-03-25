@@ -3,3 +3,5 @@ transformers
 accelerate
 sentencepiece
 datasets
+numpy
+matplotlib
