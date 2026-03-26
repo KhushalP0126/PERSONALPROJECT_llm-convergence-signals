@@ -47,6 +47,41 @@ def first_text(value):
     return None
 
 
+def collect_texts(value) -> list[str]:
+    texts: list[str] = []
+
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            texts.append(text)
+        return texts
+
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            texts.extend(collect_texts(item))
+        return texts
+
+    if isinstance(value, dict):
+        for key in ("text", "answer", "best_answer"):
+            if key in value:
+                texts.extend(collect_texts(value[key]))
+        return texts
+
+    return texts
+
+
+def unique_texts(values) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for text in collect_texts(values):
+        normalized = " ".join(text.lower().split())
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(text)
+    return deduped
+
+
 def build_records(limit: int) -> list[dict]:
     dataset = load_dataset("truthful_qa", "generation")
     validation_split = dataset["validation"]
@@ -54,8 +89,15 @@ def build_records(limit: int) -> list[dict]:
     records = []
     for item in validation_split:
         question = first_text(item.get("question"))
-        correct_answer = first_text(item.get("correct_answers")) or first_text(item.get("best_answer"))
-        incorrect_answer = first_text(item.get("incorrect_answers"))
+        best_answer = first_text(item.get("best_answer"))
+        correct_answers = unique_texts(item.get("correct_answers"))
+        incorrect_answers = unique_texts(item.get("incorrect_answers"))
+
+        if best_answer:
+            correct_answers = unique_texts([best_answer, *correct_answers])
+
+        correct_answer = best_answer or first_text(correct_answers)
+        incorrect_answer = first_text(incorrect_answers)
 
         if not question or not correct_answer or not incorrect_answer:
             continue
@@ -63,8 +105,11 @@ def build_records(limit: int) -> list[dict]:
         records.append(
             {
                 "q": question,
+                "best_answer": best_answer or correct_answer,
                 "correct_answer": correct_answer,
+                "correct_answers": correct_answers,
                 "incorrect_answer": incorrect_answer,
+                "incorrect_answers": incorrect_answers,
                 "source": "truthfulqa_generation_validation",
             }
         )

@@ -161,8 +161,9 @@ def positive_layer_fraction(scores: list[float]) -> float:
     return float(np.mean([score > 0 for score in scores]))
 
 
-def enrich_records(records: list[dict], score_field: str, label_field: str) -> list[dict]:
+def enrich_records(records: list[dict], score_field: str, label_field: str) -> tuple[list[dict], int]:
     enriched = []
+    skipped_unlabeled = 0
     for record in records:
         if score_field not in record:
             raise KeyError(f"Missing score field {score_field!r} in record.")
@@ -175,6 +176,9 @@ def enrich_records(records: list[dict], score_field: str, label_field: str) -> l
 
         enriched_record = dict(record)
         enriched_record["support_scores"] = scores
+        if record[label_field] is None:
+            skipped_unlabeled += 1
+            continue
         try:
             enriched_record["label"] = as_binary_label(record[label_field])
             enriched_record["label_source"] = label_field
@@ -188,7 +192,7 @@ def enrich_records(records: list[dict], score_field: str, label_field: str) -> l
         )
         enriched.append(enriched_record)
 
-    return enriched
+    return enriched, skipped_unlabeled
 
 
 def split_by_label(records: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -303,11 +307,19 @@ def plot_overlay(records: list[dict], count: int, output_path: Path) -> None:
     plt.close()
 
 
-def save_summary(records: list[dict], correct: list[dict], wrong: list[dict], threshold: float, output_path: Path) -> None:
+def save_summary(
+    records: list[dict],
+    correct: list[dict],
+    wrong: list[dict],
+    threshold: float,
+    skipped_unlabeled: int,
+    output_path: Path,
+) -> None:
     consensus_threshold = choose_midpoint_threshold(correct, wrong, field="consensus_mean")
     agreement_threshold = choose_midpoint_threshold(correct, wrong, field="positive_layer_fraction")
     summary = {
         "sample_count": len(records),
+        "skipped_unlabeled_count": skipped_unlabeled,
         "correct_count": len(correct),
         "wrong_count": len(wrong),
         "correct_conflict_mean": float(np.mean([record["conflict"] for record in correct])) if correct else None,
@@ -351,7 +363,9 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     records = load_records(input_path)
-    enriched = enrich_records(records, score_field=args.score_field, label_field=args.label_field)
+    enriched, skipped_unlabeled = enrich_records(records, score_field=args.score_field, label_field=args.label_field)
+    if not enriched:
+        raise ValueError("No labeled records were available after skipping unlabeled rows.")
     correct, wrong = split_by_label(enriched)
 
     sample_index = max(0, min(args.sample_index, len(enriched) - 1))
@@ -378,10 +392,13 @@ def main() -> None:
         correct,
         wrong,
         threshold,
+        skipped_unlabeled,
         output_dir / "summary.json",
     )
 
     print(f"Saved plots to {output_dir}")
+    if skipped_unlabeled:
+        print(f"skipped_unlabeled={skipped_unlabeled}")
     if accuracy is None:
         print(
             f"correct={len(correct)} wrong={len(wrong)} "
