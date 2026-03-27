@@ -23,6 +23,17 @@ def parse_args() -> argparse.Namespace:
         default=50,
         help="Maximum number of TruthfulQA questions to convert.",
     )
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="How many prepared examples to skip before starting the slice.",
+    )
+    parser.add_argument(
+        "--shuffle-seed",
+        type=int,
+        help="Optional deterministic shuffle seed. Use the same seed with different offsets to make disjoint slices.",
+    )
     return parser.parse_args()
 
 
@@ -82,11 +93,14 @@ def unique_texts(values) -> list[str]:
     return deduped
 
 
-def build_records(limit: int) -> list[dict]:
+def build_records(limit: int, offset: int = 0, shuffle_seed: int | None = None) -> list[dict]:
     dataset = load_dataset("truthful_qa", "generation")
     validation_split = dataset["validation"]
+    if shuffle_seed is not None:
+        validation_split = validation_split.shuffle(seed=shuffle_seed)
 
     records = []
+    skipped = 0
     for item in validation_split:
         question = first_text(item.get("question"))
         best_answer = first_text(item.get("best_answer"))
@@ -100,6 +114,10 @@ def build_records(limit: int) -> list[dict]:
         incorrect_answer = first_text(incorrect_answers)
 
         if not question or not correct_answer or not incorrect_answer:
+            continue
+
+        if skipped < offset:
+            skipped += 1
             continue
 
         records.append(
@@ -122,11 +140,14 @@ def build_records(limit: int) -> list[dict]:
 
 def main() -> None:
     args = parse_args()
-    records = build_records(limit=args.limit)
+    records = build_records(limit=args.limit, offset=args.offset, shuffle_seed=args.shuffle_seed)
     output_path = Path(args.out)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(records, indent=2))
-    print(f"Saved {len(records)} TruthfulQA records to {output_path}")
+    print(
+        f"Saved {len(records)} TruthfulQA records to {output_path} "
+        f"(offset={args.offset}, shuffle_seed={args.shuffle_seed})"
+    )
 
 
 if __name__ == "__main__":

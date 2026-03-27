@@ -21,6 +21,17 @@ LAYER_SUPPORT_IN ?= $(CONSENSUS_DATASET_OUT)
 TRUTHFULQA_LIMIT ?= 50
 TRUTHFULQA_PAIRS ?= data/truthfulqa_pairs.json
 TRUTHFULQA_BENCHMARK_OUT ?= results/truthfulqa_consensus_benchmark.json
+TRUTHFULQA_OFFSET ?= 0
+TRUTHFULQA_SHUFFLE_SEED ?=
+EXTERNAL_LIMIT ?= 100
+EXTERNAL_SHUFFLE_SEED ?= 17
+EXTERNAL_HOLDOUT_OFFSET ?= $(EXTERNAL_LIMIT)
+DEV_PAIRS ?= data/truthfulqa_dev.json
+DEV_BENCHMARK_OUT ?= results/truthfulqa_dev_benchmark.json
+DEV_REVIEWED_OUT ?= results/truthfulqa_dev_benchmark_reviewed.json
+TEST_PAIRS ?= data/truthfulqa_holdout.json
+TEST_BENCHMARK_OUT ?= results/truthfulqa_holdout_benchmark.json
+TEST_REVIEWED_OUT ?= results/truthfulqa_holdout_benchmark_reviewed.json
 
 VIS_INPUT ?= $(TRUTHFULQA_BENCHMARK_OUT)
 VIS_OUTPUT_DIR ?= results/consensus_plots
@@ -43,6 +54,12 @@ LABEL_INPUT ?= $(TRUTHFULQA_BENCHMARK_OUT)
 LABEL_OUTPUT ?= results/truthfulqa_consensus_benchmark_reviewed.json
 STATS_INPUT ?= $(TRUTHFULQA_BENCHMARK_OUT)
 STATS_OUTPUT_DIR ?= results/conflict_statistics
+CONVERGENCE_INPUT ?= results/truthfulqa_consensus_benchmark_reviewed.json
+CONVERGENCE_OUTPUT_DIR ?= results/convergence_metrics
+HOLDOUT_INPUT ?= results/truthfulqa_consensus_benchmark_reviewed.json
+HOLDOUT_SECONDARY_INPUT ?=
+HOLDOUT_OUTPUT_DIR ?= results/late_slope_holdout
+DEV_FRACTION ?= 0.7
 
 LIMIT ?=
 INPUT ?=
@@ -75,7 +92,12 @@ RUN_QUESTION_MATCH := $(if $(QUESTION_MATCH),$(QUESTION_MATCH),$(QUESTION_CONTAI
 	detector train-detector \
 	conflict-neurons analyze-conflict-neurons \
 	label-benchmark review-labels \
-	conflict-stats analyze-conflict-stats
+	conflict-stats analyze-conflict-stats \
+	convergence analyze-convergence \
+	holdout evaluate-holdout \
+	dev-benchmark test-benchmark \
+	dev-review test-review \
+	external-test
 
 help:
 	@echo "Recommended targets:"
@@ -93,11 +115,20 @@ help:
 	@echo "  make conflict-neurons"
 	@echo "  make label-benchmark"
 	@echo "  make conflict-stats"
+	@echo "  make convergence"
+	@echo "  make holdout"
+	@echo ""
+	@echo "External validation shortcuts:"
+	@echo "  make dev-benchmark"
+	@echo "  make test-benchmark"
+	@echo "  make dev-review"
+	@echo "  make test-review"
+	@echo "  make external-test"
 	@echo ""
 	@echo "Legacy aliases still work:"
 	@echo "  prompt build-hidden-dataset build-consensus-dataset summarize-layer-support"
 	@echo "  prepare-truthfulqa benchmark-truthfulqa visualize-consensus analyze-neurons"
-	@echo "  train-detector analyze-conflict-neurons review-labels analyze-conflict-stats"
+	@echo "  train-detector analyze-conflict-neurons review-labels analyze-conflict-stats analyze-convergence evaluate-holdout"
 	@echo ""
 	@echo "Useful variables:"
 	@echo "  MODEL='microsoft/phi-2'"
@@ -113,6 +144,8 @@ help:
 	@echo "  HIGH_K=3"
 	@echo "  LOW_K=3"
 	@echo "  QUESTION_MATCH='capital of France'"
+	@echo "  EXTERNAL_LIMIT=100"
+	@echo "  EXTERNAL_SHUFFLE_SEED=17"
 
 venv:
 	python3 -m venv $(VENV)
@@ -148,7 +181,7 @@ layers summarize-layer-support: ensure-venv
 	$(PYTHON) summarize_layer_support.py --in "$(LAYER_SUPPORT_IN)"
 
 truthfulqa prepare-truthfulqa: ensure-venv
-	$(PYTHON) prepare_truthfulqa_dataset.py --out "$(TRUTHFULQA_PAIRS)" --limit $(RUN_LIMIT)
+	$(PYTHON) prepare_truthfulqa_dataset.py --out "$(TRUTHFULQA_PAIRS)" --limit $(RUN_LIMIT) --offset $(TRUTHFULQA_OFFSET) $(if $(TRUTHFULQA_SHUFFLE_SEED),--shuffle-seed $(TRUTHFULQA_SHUFFLE_SEED))
 
 benchmark benchmark-truthfulqa: truthfulqa ensure-venv
 	$(PYTHON) benchmark_truthfulqa_consensus.py $(if $(MODEL),--model "$(MODEL)") --dataset "$(TRUTHFULQA_PAIRS)" --out "$(TRUTHFULQA_BENCHMARK_OUT)" --limit $(RUN_LIMIT) --temperature $(TEMPERATURE) --max-new-tokens $(MAX_NEW_TOKENS)
@@ -170,3 +203,24 @@ label-benchmark review-labels: ensure-venv
 
 conflict-stats analyze-conflict-stats: ensure-venv
 	$(PYTHON) analyze_conflict_statistics.py --in "$(STATS_INPUT)" --out-dir "$(STATS_OUTPUT_DIR)"
+
+convergence analyze-convergence: ensure-venv
+	$(PYTHON) analyze_convergence_metrics.py --in "$(CONVERGENCE_INPUT)" --out-dir "$(CONVERGENCE_OUTPUT_DIR)"
+
+holdout evaluate-holdout: ensure-venv
+	$(PYTHON) evaluate_late_slope_holdout.py --in "$(HOLDOUT_INPUT)" --out-dir "$(HOLDOUT_OUTPUT_DIR)" --dev-fraction $(DEV_FRACTION) $(if $(HOLDOUT_SECONDARY_INPUT),--holdout-in "$(HOLDOUT_SECONDARY_INPUT)")
+
+dev-benchmark: ensure-venv
+	$(MAKE) benchmark LIMIT=$(EXTERNAL_LIMIT) TRUTHFULQA_PAIRS="$(DEV_PAIRS)" TRUTHFULQA_BENCHMARK_OUT="$(DEV_BENCHMARK_OUT)" TRUTHFULQA_OFFSET=0 TRUTHFULQA_SHUFFLE_SEED=$(EXTERNAL_SHUFFLE_SEED)
+
+test-benchmark: ensure-venv
+	$(MAKE) benchmark LIMIT=$(EXTERNAL_LIMIT) TRUTHFULQA_PAIRS="$(TEST_PAIRS)" TRUTHFULQA_BENCHMARK_OUT="$(TEST_BENCHMARK_OUT)" TRUTHFULQA_OFFSET=$(EXTERNAL_HOLDOUT_OFFSET) TRUTHFULQA_SHUFFLE_SEED=$(EXTERNAL_SHUFFLE_SEED)
+
+dev-review: ensure-venv
+	$(MAKE) label-benchmark LABEL_INPUT="$(DEV_BENCHMARK_OUT)" LABEL_OUTPUT="$(DEV_REVIEWED_OUT)"
+
+test-review: ensure-venv
+	$(MAKE) label-benchmark LABEL_INPUT="$(TEST_BENCHMARK_OUT)" LABEL_OUTPUT="$(TEST_REVIEWED_OUT)"
+
+external-test: ensure-venv
+	$(MAKE) holdout HOLDOUT_INPUT="$(DEV_REVIEWED_OUT)" HOLDOUT_SECONDARY_INPUT="$(TEST_REVIEWED_OUT)"

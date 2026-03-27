@@ -517,15 +517,26 @@ def main() -> None:
     output_records = []
     labeled_count = 0
     ambiguous_count = 0
+    skipped_unanalyzable_count = 0
     for index, item in enumerate(records, start=1):
-        record = build_record(
-            item=item,
-            tokenizer=tokenizer,
-            model=model,
-            device=device,
-            max_new_tokens=args.max_new_tokens,
-            temperature=args.temperature,
-        )
+        try:
+            record = build_record(
+                item=item,
+                tokenizer=tokenizer,
+                model=model,
+                device=device,
+                max_new_tokens=args.max_new_tokens,
+                temperature=args.temperature,
+            )
+        except ValueError as exc:
+            if "does not diverge at a token boundary" not in str(exc):
+                raise
+            skipped_unanalyzable_count += 1
+            print(
+                f"[{index}/{len(records)}] skipped_unanalyzable_pair "
+                f"question={item.get('q')}"
+            )
+            continue
         output_records.append(record)
         if record["label"] is None:
             ambiguous_count += 1
@@ -542,7 +553,11 @@ def main() -> None:
 
     output_path = Path(args.out)
     save_records(records=output_records, output_path=output_path)
-    print(f"Labeled {labeled_count} records and left {ambiguous_count} ambiguous/unlabeled.")
+    print(
+        f"Labeled {labeled_count} records and left {ambiguous_count} ambiguous/unlabeled."
+    )
+    if skipped_unanalyzable_count:
+        print(f"Skipped {skipped_unanalyzable_count} unanalyzable TruthfulQA pairs.")
     print(f"Saved {len(output_records)} TruthfulQA consensus records to {output_path}")
 
 

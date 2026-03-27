@@ -39,6 +39,8 @@ python check_mps.py
 - `analyze_conflict_neuron_patterns.py`: compare recurring neuron patterns in high-conflict wrong cases versus low-conflict correct cases
 - `review_benchmark_labels.py`: rapidly review ambiguous benchmark outputs and assign manual labels
 - `analyze_conflict_statistics.py`: test whether conflict separates correct and wrong answers with effect sizes and p-values
+- `analyze_convergence_metrics.py`: test a pivot hypothesis based on late-layer convergence instead of conflict
+- `evaluate_late_slope_holdout.py`: run a locked holdout test for the chosen late-slope convergence metric
 
 ## Makefile Shortcuts
 
@@ -57,6 +59,8 @@ make detector
 make conflict-neurons
 make label-benchmark
 make conflict-stats
+make convergence
+make holdout
 ```
 
 Useful overrides:
@@ -69,6 +73,8 @@ make neurons INPUT=results/consensus_dataset.json QUESTION_MATCH="capital of Fra
 make conflict-neurons HIGH_K=2 LOW_K=2
 make label-benchmark LIMIT=10
 make conflict-stats STATS_INPUT=results/truthfulqa_consensus_benchmark_reviewed.json
+make convergence CONVERGENCE_INPUT=results/truthfulqa_consensus_benchmark_reviewed.json
+make holdout DEV_FRACTION=0.7
 ```
 
 Legacy target names like `prompt`, `build-consensus-dataset`, and `analyze-neurons` still work, but the shorter names above are the preferred interface.
@@ -207,6 +213,13 @@ Download and convert a small benchmark slice:
 
 ```bash
 python prepare_truthfulqa_dataset.py --limit 50
+```
+
+For a disjoint slice, use `--offset`. For repeatable dev/holdout slices, use the same `--shuffle-seed` with different offsets:
+
+```bash
+python prepare_truthfulqa_dataset.py --limit 100 --offset 0 --shuffle-seed 17 --out data/truthfulqa_dev.json
+python prepare_truthfulqa_dataset.py --limit 100 --offset 100 --shuffle-seed 17 --out data/truthfulqa_holdout.json
 ```
 
 Output:
@@ -453,6 +466,104 @@ The statistical summary reports both `conflict` and `late_conflict`, including:
 - binomial p-value for the threshold baseline
 
 This is the Day 8 scaling check: keep the metric simple, then test whether the separation survives with more reviewed labels.
+
+## 13. Pivot To Late-Layer Convergence
+
+If the conflict hypothesis fails replication, run:
+
+```bash
+python analyze_convergence_metrics.py --in results/truthfulqa_consensus_benchmark_reviewed.json
+```
+
+Or with Make:
+
+```bash
+make convergence
+```
+
+Output:
+
+```text
+results/convergence_metrics/summary.json
+```
+
+This script tests a more specific hypothesis:
+
+- truthful answers end with a more positive support margin
+- truthful answers rise more strongly in the final layers
+- wrong answers fail to converge late
+
+It evaluates:
+
+- `late_slope`
+- `final_support`
+- `late_mean`
+- `early_to_late_delta`
+- `truth_model_final`
+- `overall_abs_mean`
+
+Each metric is scored with the fixed interpretation `higher is more truthful`, and the summary reports:
+
+- class means
+- effect sizes
+- permutation p-values
+- bootstrap confidence intervals
+- simple midpoint-threshold accuracy
+
+This is an exploratory pivot, not a confirmed result. If one of these metrics looks promising, the next step is to validate it on a fresh benchmark slice rather than reuse the same reviewed set.
+
+## 14. Run A Locked Holdout Test
+
+Once you decide to lock `late_slope` as the metric, run:
+
+```bash
+python evaluate_late_slope_holdout.py --in results/truthfulqa_consensus_benchmark_reviewed.json
+```
+
+Or with Make:
+
+```bash
+make holdout
+```
+
+Output:
+
+```text
+results/late_slope_holdout/summary.json
+```
+
+This script:
+
+- fixes the metric to `late_slope`
+- keeps the interpretation fixed: higher late slope means more truthful
+- fits the decision threshold on the development split only
+- evaluates the holdout split without retuning
+- saves the exact split membership for reproducibility
+
+By default it performs a stratified `70/30` split on one reviewed file. For a cleaner external validation, point it at a second unseen reviewed file:
+
+```bash
+python evaluate_late_slope_holdout.py \
+  --in results/reviewed_dev.json \
+  --holdout-in results/reviewed_holdout.json
+```
+
+If you use a split from one already-reviewed dataset, treat it as a post-hoc estimate. The cleanest test is a fresh holdout file that played no role in the metric discovery.
+
+Recommended external-validation workflow:
+
+```bash
+make benchmark LIMIT=100 TRUTHFULQA_PAIRS=data/truthfulqa_dev.json TRUTHFULQA_BENCHMARK_OUT=results/truthfulqa_dev_benchmark.json TRUTHFULQA_OFFSET=0 TRUTHFULQA_SHUFFLE_SEED=17
+make benchmark LIMIT=100 TRUTHFULQA_PAIRS=data/truthfulqa_holdout.json TRUTHFULQA_BENCHMARK_OUT=results/truthfulqa_holdout_benchmark.json TRUTHFULQA_OFFSET=100 TRUTHFULQA_SHUFFLE_SEED=17
+```
+
+After reviewing labels for both files, run:
+
+```bash
+python evaluate_late_slope_holdout.py \
+  --in results/truthfulqa_dev_benchmark_reviewed.json \
+  --holdout-in results/truthfulqa_holdout_benchmark_reviewed.json
+```
 
 This script:
 
